@@ -146,8 +146,6 @@ p_\theta\big(\mathbf{a}^{\tau + \delta} \mid \mathbf{a}^{\tau}\big) = \mathcal{N
 \tag{6}
 $$
 
-> **Reading Eq. (5).** The SDE drift is the ODE velocity plus a *correction that pulls toward the currently predicted clean action*, with strength $\sigma_\tau^2 / (2\tau)$. Noise injects exploration; the score term re-anchors the perturbed sample on the data manifold, so the marginal is preserved for **any** schedule $\sigma_\tau \ge 0$. Following [5] we use $\sigma_\tau = \alpha \sqrt{\tau / (1 - \tau)}$, for which $\sigma_\tau^2 / (2\tau) = \alpha^2 / (2(1 - \tau))$ remains finite as $\tau \to 0$; a *constant* noise level would need $\tau$ clamped away from $0$ to avoid the same singularity.
-
 Since the covariance does not depend on $\theta$, the per-step log-ratio is available in closed form — no numerical integration, no Jacobian trace:
 
 $$
@@ -164,7 +162,7 @@ and the chain-level ratio factorizes over denoising steps: $r_t^{a}(\theta) = \p
 
 ### 3.3 Video branch: latent tokens as Gaussian decision variables
 
-The video branch emits a tensor of continuous latents rather than a categorical token, so no exact likelihood is available. Following LAPO [8], we place an isotropic Gaussian of fixed width $\sigma_z$ around the *deterministic* output of the current policy and treat the latent tensor as the branch's decision variable:
+The video branch emits a tensor of continuous latents rather than a categorical token, so no exact likelihood is available. Following LaST-R1 [8], we place an isotropic Gaussian of fixed width $\sigma_z$ around the *deterministic* output of the current policy and treat the latent tensor as the branch's decision variable:
 
 $$
 \pi_\theta^{z}(\mathbf{Z}_t \mid \mathbf{c}_t)
@@ -173,7 +171,7 @@ $$
 \tag{8}
 $$
 
-where $\mathbf{z}_{t,i}^{\text{old}}$ are the latents stored in the rollout buffer, $\mathbf{z}_{t,i}^{\theta}$ the latents the current policy would produce for the same context, and $N_z$ the number of tokens retained after **latent subsampling** — a memory-oriented downsampling of the token grid that keeps the ratio cheap without, in our runs, materially changing the update.
+where $\mathbf{z}_{t,i}^{\text{old}}$ are the latents stored in the rollout buffer, $\mathbf{z}_{t,i}^{\theta}$ the latents the current policy would produce for the same context, and $N_z$ the number of tokens retained after a downsampling.
 
 The correct importance ratio is the quotient of two such densities,
 
@@ -194,17 +192,9 @@ r_t^{z}(\theta)
 \tag{10}
 $$
 
-We use Eq. (10) for the fully deterministic (ODE) variant and Eq. (9) whenever noise is injected into the video branch (Sec. 3.4), since only the two-term form guarantees $r_t^z = 1$ at the beginning of a PPO epoch.
+### 3.4 Randomly choose steps
 
-> **Interpretation.** Eq. (10) is a trust region in latent space: the further the new policy's imagined future drifts from the future that was actually rolled out, the more the update is clipped. $\sigma_z$ trades off exploration against update stability — small $\sigma_z$ makes the ratio sensitive to trivial pixel-level changes, large $\sigma_z$ makes it nearly uninformative. This is the single most important hyperparameter of the video branch.
-
-### 3.4 Mixed ODE–SDE rollout
-
-Making the video branch stochastic at *every* one of the $K$ denoising steps would require storing $K$ latent tensors per environment step and backpropagating a ratio through the full chain — prohibitive for a 5B-parameter video DiT. We instead adopt a **mixed ODE–SDE rollout**: at each environment step we draw a single index $n \sim \mathcal{U}\{0, \dots, K-1\}$, run the video branch as a deterministic ODE everywhere except at step $n$, where Gaussian noise is injected and the transition is recorded. The video-branch ratio is computed at step $n$ only.
-
-Two properties make this attractive. (i) **Cost.** Only one denoising step per environment step contributes a ratio, so the extra forward/backward cost of the video branch is $\mathcal{O}(1)$ rather than $\mathcal{O}(K)$ in $K$, and the memory footprint of stored latents drops by the same factor. (ii) **Unbiasedness.** Averaging over the uniformly drawn index recovers the step-averaged objective $\mathbb{E}_{n}\big[ \frac{1}{K}\sum_{k} \ell^{(k)} \big]$; a single sample is an unbiased, higher-variance estimator of it. Because $\hat{A}_t$ is shared across branches, the extra variance is partly absorbed by the action branch's lower-variance signal.
-
-> **At the boundary between sampling and learning.** Note the division of labour: the *executed* action always comes from the fully stochastic action branch (Eq. 8), so environment exploration is unaffected by the mixed rollout. The mixed strategy governs only how the video branch is *credited*.
+Making the video branch stochastic at *every* one of the $K$ denoising steps would require storing $K$ latent tensors per environment step and backpropagating a ratio through the full chain — prohibitive for a 5B-parameter video DiT. We instead adopt a **Random Strategy**: we draw a single index $n \sim \mathcal{U}\{0, \dots, K-1\}$, where pre-step latent feature noise is injected and the transition is recorded， and the video-branch ratio is computed at step $n$ only.
 
 ### 3.5 Algorithm
 
@@ -212,30 +202,52 @@ Two properties make this attractive. (i) **Cost.** Only one denoising step per e
 Algorithm 1  Dual-branch PPO for WAM policies (one iteration)
 ──────────────────────────────────────────────────────────────────────────────
 Require: WAM policy π_θ = (action expert, video DiT), SFT weights θ, value net V_φ,
-         denoising steps K, step δ = 1/K, noise schedules σ_τ and σ_z,
-         latent subsample size N_z, clip bounds (ε_min, ε_max)
+         denoising steps K, step δ = 1/K, schedule scales α_a, α_z,
+         video-token subsample size N_z, clip bounds (ε_min, ε_max)
+
  1:  θ_old ← θ
- 2:  for each environment step t do
- 3:      c_t ← encode(o_{≤t}, ℓ)                              # shared context
- 4:      # ── action branch: full K-step SDE rollout ─────────────────────────
- 5:      a_t^0 ∼ N(0, I);   log r_t^a ← 0
- 6:      for k = 0 … K−1 do
- 7:          τ_k ← k/K ;  v_k ← v_θ(a_t^{τ_k}, τ_k, c_t)
- 8:          â_k ← a_t^{τ_k} + (1 − τ_k) v_k                   # clean-action estimate
- 9:          u_k ← v_k + (σ_{τ_k}² / (2 τ_k)) â_k              # score-corrected drift
-10:          a_t^{τ_k + δ} ∼ N(a_t^{τ_k} + δ u_k ,  σ_{τ_k}² δ I)
-11:          log r_t^a ← log r_t^a + Eq. (7)                  # u_k recomputed under θ_old
-12:      end for
-13:      # ── video branch: mixed ODE–SDE rollout ────────────────────────────
-14:      n ∼ Uniform{0, …, K−1}
-15:      run the video branch as an ODE for k ≠ n
-16:      at step n: inject N(0, σ_{τ_n}² δ I);  store z_t^{old} and z_t^{θ_old}
-17:                                                            # subsample to N_z tokens
-18:      log r_t^z ← Eq. (9)                                  # or Eq. (10) if k=n is ODE
-19:      execute the first h actions of a_t^1;  observe reward r_t and o_{t+1}
-20:  end for
-21:  Â_t ← GAE(r_{1:T}, V_φ)                                   # one shared advantage
-22:  update θ with Eq. (2) and φ with the value loss
+ 2:  ══════════ ROLLOUT  (behaviour policy θ_old, no gradients) ═════════════
+ 3:  for each environment step t do
+ 4:      c_t ← encode(o_{≤t}, ℓ)                              # shared context
+ 5:      n ∼ Uniform{0, …, K−1}                               # ONE index, both branches
+ 6:
+ 7:      # ── action branch: K steps, noise only at k = n ────────────────────
+ 8:      a^{τ_0} ∼ N(0, I)
+ 9:      for k = 0 … K−1 do
+10:          τ_k ← k/K ;   v_k ← v^a_{θ_old}(a^{τ_k}, τ_k, c_t)
+11:          â_k ← a^{τ_k} + (1 − τ_k) v_k                    # clean-action estimate
+12:          u_k ← v_k + ((σ^a_{τ_k})² / (2 τ_k)) â_k         # score-corrected drift
+13:          if k = n then   a^{τ_k+δ} ∼ N(a^{τ_k} + δ u_k , (σ^a_{τ_k})² δ I)
+14:          else            a^{τ_k+δ} ← a^{τ_k} + δ u_k      # deterministic ODE step
+15:      end for
+16:      store (a^{τ_n}, Δa ← a^{τ_n+δ} − a^{τ_n}, u_n)       # ONE transition only
+17:
+18:      # ── video branch: same K steps, noise at the SAME k = n ─────────────
+19:      z^{τ_0} ∼ N(0, I)
+20:      for k = 0 … K−1 do
+21:          w_k ← v^z_{θ_old}(z^{τ_k}, τ_k, c_t)
+22:          ẑ_k ← z^{τ_k} + (1 − τ_k) w_k
+23:          m_k ← w_k + ((σ^z_{τ_k})² / (2 τ_k)) ẑ_k
+24:          if k = n then   z^{τ_k+δ} ∼ N(z^{τ_k} + δ m_k , (σ^z_{τ_k})² δ I)
+25:          else            z^{τ_k+δ} ← z^{τ_k} + δ m_k
+26:      end for
+27:      store (z^{τ_n}, Δz ← z^{τ_n+δ} − z^{τ_n}, m_n)       # subsampled to N_z tokens
+28:
+29:      execute the first h actions of a^{τ_K} = a¹;  observe r_t and o_{t+1}
+30:  end for
+31:
+32:  ══════════ UPDATE ══════════════════════════════════════════════════════
+33:  Â_t ← GAE(r_{1:T}, V_φ)                                   # one shared advantage
+34:  for each PPO epoch do
+35:      for each minibatch do
+36:          # re-evaluate ONE denoising step per branch, at the STORED states
+37:          u^θ_n ← drift of v^a_θ at (a^{τ_n}, τ_n, c_t)     #   1 forward pass
+38:          m^θ_n ← drift of v^z_θ at (z^{τ_n}, τ_n, c_t)     #   1 forward pass
+39:          log r^a ← Eq. (7) with (Δa, u^θ_n, u_n)
+40:          log r^z ← Eq. (7) with (Δz, m^θ_n, m_n)          # over subsampled tokens
+41:          update θ with Eq. (2) ;  update φ with the value loss
+42:      end for
+43:  end for
 ```
 
 ### 3.6 Notation
@@ -288,7 +300,6 @@ Three notation traps are worth flagging, since all of them appear in the source 
 | Fast-WAM (SFT checkpoint, ours) | $10$ | $91.1\%$ | — | — | — | — |
 | + Flow-SDE (action branch only) | $10$ | $91.1\%$ | $94.5\%$ | $94.4\%$ | $95.1\%$ | — |
 | + **Dual-branch RL (ours)** | $10$ | $91.1\%$ | $\mathbf{96.0}\%$ | $\mathbf{96.0}\%$ | $\mathbf{96.5}\%$ | $\mathbf{+1.5}$ |
-| *Fast-WAM, as reported in [7]* | $20$ | — | *$95.2\%$* | — | — | — |
 
 **Table 1.** LIBERO-Long success rate. "Final" is the last evaluation at step 1000; "last-100 mean" averages the final ten evaluations to remove evaluation noise. The last row is copied from [7] for reference only: it uses a different denoising budget and protocol, so it is not a like-for-like comparison with the three rows above it.
 
@@ -314,7 +325,7 @@ Three notation traps are worth flagging, since all of them appear in the source 
 
 **Scope.** Results are limited to LIBERO-Long with a single base policy, a single denoising budget, and a single seed. Robustness under distribution shift — the setting in which a world model should pay off most — is untested.
 
-**Next steps.** We are running LIBERO-Plus [15], a robustness suite built on LIBERO that perturbs object layout, camera pose, language, lighting, background and sensor noise, where we expect the return-conditioned video branch to help more than on the in-distribution suites. We are also releasing training and inference code.
+**Next steps.** I am running LIBERO-Plus [15], a robustness suite built on LIBERO that perturbs object layout, camera pose, language, lighting, background and sensor noise, where we expect the return-conditioned video branch to help more than on the in-distribution suites. We are also releasing training and inference code.
 
 ---
 
@@ -342,8 +353,6 @@ We build on **RLinf** [14] for large-scale RL infrastructure, and thank its auth
 14. C. Yu, Y. Wang, Z. Guo et al. **RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation.** arXiv:2509.15965, 2025.
 15. **LIBERO-plus.** Robustness evaluation suite for vision-language-action policies built on LIBERO (community project; no canonical paper at the time of writing). <https://github.com/sylvestf/LIBERO-plus>
 
-*Further reading on world models for control:* D. Hafner et al., **Mastering Diverse Domains through World Models** (DreamerV3), ICLR 2024, arXiv:2301.04104; M. Assran et al., **V-JEPA 2**, arXiv:2506.09985, 2025; J. Cen et al., **WorldVLA**, arXiv:2506.21539, 2025.
-
 ---
 
 ## Cite this post
@@ -351,9 +360,9 @@ We build on **RLinf** [14] for large-scale RL infrastructure, and thank its auth
 ```bibtex
 @misc{dualbranchrl-wam-2026,
   title  = {Dual-Branch Reinforcement Learning for World-Action Models},
-  author = {[[fill: your name]]},
+  author = {[[fill: Trayfour Yu]]},
   year   = {2026},
-  howpublished = {\url{[[fill: https://<username>.github.io/<repo>/]]}},
+  howpublished = {\url{[[fill: https://trayfouryu.github.io/wam_rl/]]}},
   note   = {Research blog post}
 }
 ```
