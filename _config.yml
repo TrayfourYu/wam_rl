@@ -1,0 +1,52 @@
+# ===========================================================================
+#  Jekyll 站点配置（GitHub Pages 自动构建）
+#  已按你的仓库预填：TrayfourYu / wam_rl
+# ===========================================================================
+
+# ---- 1. 基本信息 ---------------------------------------------------------
+
+title: "Trayfour Yu"                 # 👈 想改就改，显示在页面左上角
+description: >-
+  Research notes on embodied AI, vision-language-action models,
+  and reinforcement learning for robot manipulation.
+
+# ---- 2. 域名（已按你的仓库预填好，一般不用动）----------------------------
+
+baseurl: "/wam_rl"                   # 仓库名，前面有斜杠、后面没有
+url: "https://trayfouryu.github.io"  # 只填域名，不含仓库名
+# 最终地址 = https://trayfouryu.github.io/wam_rl/
+
+# ---- 3. 主题 -------------------------------------------------------------
+
+theme: minima          # GitHub Pages 官方支持，无需额外配置
+
+# ---- 4. Markdown 与公式（不要动）-----------------------------------------
+#
+#  math_engine: null 是公式能正常显示的关键。
+#  kramdown 默认会把 $$...$$ 改写成旧式 <script type="math/tex"> 标签，
+#  那是 MathJax v2 的写法，而文章加载的是 MathJax v3，v3 不认这种标签，
+#  结果页面会显示一坨 \frac \sum 的源码。
+
+markdown: kramdown
+kramdown:
+  input: GFM
+  math_engine: null
+  syntax_highlighter: rouge
+
+# ---- 5. 插件 -------------------------------------------------------------
+#
+#  jekyll-feed 不能删！Minima 的布局里有 feed_meta 标签，
+#  少了这个插件构建会直接失败：Unknown tag 'feed_meta'
+
+plugins:
+  - jekyll-feed
+
+# ---- 6. 构建选项 ---------------------------------------------------------
+
+timezone: Asia/Shanghai
+future: true          # 防止时区差异导致当天发布的文章"消失"
+show_excerpts: true   # 首页显示摘要
+
+exclude:
+  - README.md
+  - PUBLISHING.md
