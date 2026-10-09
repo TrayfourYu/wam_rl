@@ -146,20 +146,6 @@ p_\theta\big(\mathbf{a}^{\tau + \delta} \mid \mathbf{a}^{\tau}\big) = \mathcal{N
 \tag{6}
 $$
 
-Since the covariance does not depend on $\theta$, the per-step log-ratio is available in closed form — no numerical integration, no Jacobian trace:
-
-$$
-\log r_t^{a,(\tau)} =
-\frac{1}{\sigma_\tau^{2}} \Big\langle \Delta \mathbf{a}_t^{\tau},\ \mathbf{u}_\theta^{\tau} - \mathbf{u}_{\theta_{\text{old}}}^{\tau} \Big\rangle
-\;-\;
-\frac{\delta}{2\sigma_\tau^{2}} \Big( \lVert \mathbf{u}_\theta^{\tau} \rVert^{2} - \lVert \mathbf{u}_{\theta_{\text{old}}}^{\tau} \rVert^{2} \Big),
-\qquad
-\Delta \mathbf{a}_t^{\tau} \triangleq \mathbf{a}_t^{\tau + \delta} - \mathbf{a}_t^{\tau},
-\tag{7}
-$$
-
-and the chain-level ratio factorizes over denoising steps: $r_t^{a}(\theta) = \prod_{k=0}^{K-1} r_t^{a,(\tau_k)}(\theta)$.
-
 ### 3.3 Video branch: latent tokens as Gaussian decision variables
 
 The video branch emits a tensor of continuous latents rather than a categorical token, so no exact likelihood is available. Following LaST-R1 [8], we place an isotropic Gaussian of fixed width $\sigma_z$ around the *deterministic* output of the current policy and treat the latent tensor as the branch's decision variable:
