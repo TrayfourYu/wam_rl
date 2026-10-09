@@ -173,16 +173,6 @@ $$
 
 where $\mathbf{z}_{t,i}^{\text{old}}$ are the latents stored in the rollout buffer, $\mathbf{z}_{t,i}^{\theta}$ the latents the current policy would produce for the same context, and $N_z$ the number of tokens retained after a downsampling.
 
-The correct importance ratio is the quotient of two such densities,
-
-$$
-r_t^{z}(\theta)
-= \exp\!\left( -\frac{1}{2\sigma_z^{2}} \sum_{i=1}^{N_z}
-\Big[ \big\lVert \mathbf{z}_{t,i}^{\text{old}} - \mathbf{z}_{t,i}^{\theta} \big\rVert^{2}
-     - \big\lVert \mathbf{z}_{t,i}^{\text{old}} - \mathbf{z}_{t,i}^{\theta_{\text{old}}} \big\rVert^{2} \Big] \right).
-\tag{9}
-$$
-
 When the branch is rolled out deterministically, the stored latents *are* the behavior policy's output, $\mathbf{z}_{t,i}^{\theta_{\text{old}}} = \mathbf{z}_{t,i}^{\text{old}}$, the second term vanishes, and Eq. (9) reduces to the single-term form used in [8]:
 
 $$
